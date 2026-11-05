@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// Bumped whenever runs are saved or deleted, so History and Stats refresh.
 final ValueNotifier<int> runsChanged = ValueNotifier<int>(0);
@@ -69,9 +70,11 @@ class RunStorage {
   static Future<List<RunRecord>> loadRuns() async {
     final prefs = await SharedPreferences.getInstance();
     final list = prefs.getStringList(_key) ?? [];
-    return list
+        final runs = list
         .map((s) => RunRecord.fromJson(jsonDecode(s) as Map<String, dynamic>))
         .toList();
+    runs.sort((a, b) => a.date.compareTo(b.date)); // oldest first
+    return runs;
   }
 
   /// Saves the run summary, and the route under its own key so the
@@ -137,4 +140,23 @@ String formatDate(DateTime d) {
   final day = d.day.toString().padLeft(2, '0');
   final month = d.month.toString().padLeft(2, '0');
   return '$day/$month/${d.year}';
+}
+
+/// The runner's display name, from sign-up. Falls back to part of the email.
+String userName() {
+  final user = Supabase.instance.client.auth.currentUser;
+  final name = user?.userMetadata?['display_name'];
+  if (name is String && name.trim().isNotEmpty) return name.trim();
+  final email = user?.email;
+  if (email != null && email.contains('@')) return email.split('@').first;
+  return 'runner';
+}
+
+/// A short message for the Run Complete screen, based on distance.
+String praise(double km) {
+  final name = userName();
+  if (km >= 10) return 'Incredible, $name!';
+  if (km >= 5) return 'Strong run, $name!';
+  if (km >= 2) return 'Nice run, $name!';
+  return 'Good start, $name!';
 }

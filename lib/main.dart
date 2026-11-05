@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'auth_page.dart';
+import 'config.dart';
 import 'history_page.dart';
 import 'models.dart';
 import 'run_page.dart';
@@ -7,6 +10,10 @@ import 'stats_page.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await loadTheme();
+  await Supabase.initialize(
+    url: supabaseUrl,
+    publishableKey: supabasePublishableKey,
+  );
   runApp(const JaraApp());
 }
 
@@ -34,8 +41,25 @@ class JaraApp extends StatelessWidget {
           themeMode: mode,
           theme: buildTheme(Brightness.light),
           darkTheme: buildTheme(Brightness.dark),
-          home: const HomeShell(),
+          home: const AuthGate(),
         );
+      },
+    );
+  }
+}
+
+/// Shows the login screen when signed out, and the app when signed in.
+/// The session is saved on the phone, so people stay logged in.
+class AuthGate extends StatelessWidget {
+  const AuthGate({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<AuthState>(
+      stream: Supabase.instance.client.auth.onAuthStateChange,
+      builder: (context, snapshot) {
+        final session = Supabase.instance.client.auth.currentSession;
+        return session == null ? const AuthPage() : const HomeShell();
       },
     );
   }

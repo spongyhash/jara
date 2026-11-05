@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'models.dart';
+import 'share_card.dart';
+import 'sync.dart';
 import 'widgets.dart';
 
 class HistoryPage extends StatefulWidget {
@@ -12,12 +14,14 @@ class HistoryPage extends StatefulWidget {
 class _HistoryPageState extends State<HistoryPage> {
   List<RunRecord> runs = [];
   bool loading = true;
+  bool syncing = false;
 
   @override
   void initState() {
     super.initState();
     load();
     runsChanged.addListener(load);
+    SyncService.syncAll(); // quietly sync when the app opens
   }
 
   @override
@@ -33,6 +37,17 @@ class _HistoryPageState extends State<HistoryPage> {
       runs = loaded.reversed.toList();
       loading = false;
     });
+  }
+
+  Future<void> sync() async {
+    if (syncing) return;
+    setState(() => syncing = true);
+    final message = await SyncService.syncAll();
+    if (!mounted) return;
+    setState(() => syncing = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
   }
 
   @override
@@ -52,7 +67,7 @@ class _HistoryPageState extends State<HistoryPage> {
             title: Text('${r.distanceKm.toStringAsFixed(2)} km'),
             subtitle: Text(
               '${formatDate(r.date)}  |  ${formatTime(r.seconds)}  |  '
-              '${formatPace(r.paceMinPerKm)} /km',
+              '${formatPace(r.paceMinPerKm)} min/km',
             ),
             trailing: const Icon(Icons.chevron_right),
             onTap: () {
@@ -67,7 +82,22 @@ class _HistoryPageState extends State<HistoryPage> {
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('History')),
+      appBar: AppBar(
+        title: const Text('History'),
+        actions: [
+          IconButton(
+            tooltip: 'Sync runs',
+            onPressed: syncing ? null : sync,
+            icon: syncing
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.cloud_sync_outlined),
+          ),
+        ],
+      ),
       body: body,
     );
   }
@@ -106,9 +136,20 @@ class _RunDetailPageState extends State<RunDetailPage> {
       no: 'No, keep it',
     );
     if (!yes) return;
-    await RunStorage.deleteRun(widget.run.id);
+    await SyncService.deleteRun(widget.run.id);
     if (!mounted) return;
     Navigator.pop(context);
+  }
+
+  void shareRun() {
+    final route = segments;
+    if (route == null) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => SharePreviewPage(run: widget.run, segments: route),
+      ),
+    );
   }
 
   Widget stat(String value, String label) {
@@ -128,6 +169,11 @@ class _RunDetailPageState extends State<RunDetailPage> {
       appBar: AppBar(
         title: Text(formatDate(r.date)),
         actions: [
+          IconButton(
+            tooltip: 'Share run',
+            icon: const Icon(Icons.share),
+            onPressed: segments == null ? null : shareRun,
+          ),
           IconButton(
             tooltip: 'Delete run',
             icon: const Icon(Icons.delete_outline),
@@ -149,7 +195,7 @@ class _RunDetailPageState extends State<RunDetailPage> {
               children: [
                 stat('${r.distanceKm.toStringAsFixed(2)} km', 'Distance'),
                 stat(formatTime(r.seconds), 'Time'),
-                stat(formatPace(r.paceMinPerKm), 'Pace /km'),
+                stat(formatPace(r.paceMinPerKm), 'Pace (min/km)'),
               ],
             ),
           ),

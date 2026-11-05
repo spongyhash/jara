@@ -4,6 +4,10 @@ import 'package:geolocator/geolocator.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'models.dart';
 import 'widgets.dart';
+import 'share_card.dart';
+import 'package:geolocator_android/geolocator_android.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'sync.dart';
 
 enum RunState { idle, waiting, running, paused, finished }
 
@@ -100,10 +104,16 @@ class _RunPageState extends State<RunPage> with WidgetsBindingObserver {
     stopwatch.reset(); // the clock starts at the first good GPS fix
     WakelockPlus.enable();
 
-    final settings = AndroidSettings(
+        final settings = AndroidSettings(
       accuracy: LocationAccuracy.best,
       distanceFilter: 3,
       intervalDuration: const Duration(seconds: 1),
+      foregroundNotificationConfig: const ForegroundNotificationConfig(
+        notificationTitle: 'Jara',
+        notificationText: 'Run in progress',
+        notificationChannelName: 'Run tracking',
+        enableWakeLock: true,
+      ),
     );
 
     subscription = Geolocator.getPositionStream(locationSettings: settings)
@@ -126,7 +136,7 @@ class _RunPageState extends State<RunPage> with WidgetsBindingObserver {
     accuracy = p.accuracy;
 
     if (phase != RunState.waiting && phase != RunState.running) return;
-    if (p.accuracy > 20) return; // skip weak GPS readings
+    if (p.accuracy > 12) return; // skip weak GPS readings (indoor drift)
 
     final pt = GpsPoint(p.latitude, p.longitude);
 
@@ -140,6 +150,8 @@ class _RunPageState extends State<RunPage> with WidgetsBindingObserver {
       // First point of the run, or first point after resuming
       segments.add([pt]);
     } else {
+            // If the phone reports speed, near zero means you are standing still
+      if (p.speedAccuracy > 0 && p.speed < 0.3) return;
       final d = Geolocator.distanceBetween(
         last.latitude,
         last.longitude,
@@ -149,7 +161,7 @@ class _RunPageState extends State<RunPage> with WidgetsBindingObserver {
       var secs = p.timestamp.difference(lastTime ?? p.timestamp).inSeconds;
       if (secs < 1) secs = 1;
 
-      if (d < 3) return; // ignore GPS jitter when standing still
+      if (d < 3 || d < p.accuracy * 0.5) return; // movement inside GPS noise
       if (d / secs > 12) return; // ignore jumps faster than about 43 km/h
 
       distanceM += d;
@@ -221,6 +233,7 @@ class _RunPageState extends State<RunPage> with WidgetsBindingObserver {
       stopwatch.elapsed.inSeconds,
     );
     await RunStorage.saveRun(record, segments);
+        SyncService.syncAll(); // upload in the background
     if (!mounted) return;
     resetRun();
     ScaffoldMessenger.of(context).showSnackBar(
@@ -246,6 +259,24 @@ class _RunPageState extends State<RunPage> with WidgetsBindingObserver {
       MaterialPageRoute(
         builder: (_) => RouteMapPage(
           title: 'Your route',
+          segments: List<List<GpsPoint>>.from(segments),
+        ),
+      ),
+    );
+  }
+
+  void shareRun() {
+    final record = RunRecord(
+      'share_preview',
+      DateTime.now(),
+      distanceM / 1000,
+      stopwatch.elapsed.inSeconds,
+    );
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => SharePreviewPage(
+          run: record,
           segments: List<List<GpsPoint>>.from(segments),
         ),
       ),
@@ -306,8 +337,12 @@ class _RunPageState extends State<RunPage> with WidgetsBindingObserver {
           Icon(Icons.directions_run,
               size: 80, color: Theme.of(context).colorScheme.primary),
           const SizedBox(height: 8),
-          const Text('Go the extra mile', style: TextStyle(fontSize: 18)),
-          const SizedBox(height: 32),
+          Text('Hi, ${userName()}',
+              style:
+                  const TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
+          const Text('Ready to go the extra mile?',
+              style: TextStyle(fontSize: 16)),          const SizedBox(height: 32),
           if (!permissionOk)
             Card(
               child: Padding(
@@ -463,8 +498,10 @@ class _RunPageState extends State<RunPage> with WidgetsBindingObserver {
                 child: Icon(Icons.check, color: Colors.white, size: 36),
               ),
               const SizedBox(height: 12),
-              const Text('Run Complete!',
-                  style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+              Text(praise(km),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      fontSize: 28, fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
               FittedBox(
                 child: Text(
@@ -478,7 +515,7 @@ class _RunPageState extends State<RunPage> with WidgetsBindingObserver {
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
                   metric(Icons.timer_outlined, formatTime(seconds), 'Time'),
-                  metric(Icons.speed, avgPace, 'Avg pace /km'),
+                  metric(Icons.speed, avgPace, 'Avg pace: min/km'),
                 ],
               ),
               const Spacer(),
@@ -491,13 +528,26 @@ class _RunPageState extends State<RunPage> with WidgetsBindingObserver {
                 ),
               ),
               const SizedBox(height: 10),
-              SizedBox(
-                width: double.infinity,
+                    SizedBox(
                 height: 52,
-                child: OutlinedButton.icon(
-                  onPressed: viewMap,
-                  icon: const Icon(Icons.map_outlined),
-                  label: const Text('View map'),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: viewMap,
+                        icon: const Icon(Icons.map_outlined),
+                        label: const Text('View map'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: shareRun,
+                        icon: const Icon(Icons.share),
+                        label: const Text('Share'),
+                      ),
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(height: 28),
@@ -545,6 +595,12 @@ class _RunPageState extends State<RunPage> with WidgetsBindingObserver {
           title: const Text('Jara',
               style: TextStyle(fontWeight: FontWeight.w800)),
           actions: [
+                        if (phase == RunState.idle)
+              IconButton(
+                tooltip: 'Log out',
+                icon: const Icon(Icons.logout),
+                onPressed: () => Supabase.instance.client.auth.signOut(),
+              ),
             ValueListenableBuilder<ThemeMode>(
               valueListenable: themeMode,
               builder: (context, mode, _) => IconButton(
