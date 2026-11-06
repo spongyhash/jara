@@ -1,8 +1,11 @@
 import 'dart:math';
 import 'dart:ui' as ui;
+import 'package:cross_file/cross_file.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'models.dart';
 
 class _Palette {
@@ -53,6 +56,55 @@ String clockText(DateTime d) {
   final h = d.hour.toString().padLeft(2, '0');
   final m = d.minute.toString().padLeft(2, '0');
   return '$h:$m';
+}
+
+/// Removes the first and last [meters] of a route, so a shared picture does
+/// not show where the run started (often home). Very short routes return
+/// nothing, because there would be nothing left to show.
+List<List<GpsPoint>> trimRouteEnds(List<List<GpsPoint>> segments,
+    {double meters = 150}) {
+  final segs = [for (final s in segments) List<GpsPoint>.from(s)];
+  segs.removeWhere((s) => s.isEmpty);
+
+  var total = 0.0;
+  for (final s in segs) {
+    for (var i = 1; i < s.length; i++) {
+      total += Geolocator.distanceBetween(
+        s[i - 1].latitude,
+        s[i - 1].longitude,
+        s[i].latitude,
+        s[i].longitude,
+      );
+    }
+  }
+  if (total < meters * 3) return [];
+
+  _trimStart(segs, meters);
+
+  final reversed = [for (final s in segs.reversed) s.reversed.toList()];
+  _trimStart(reversed, meters);
+  return [for (final s in reversed.reversed) s.reversed.toList()];
+}
+
+void _trimStart(List<List<GpsPoint>> segs, double meters) {
+  var left = meters;
+  while (segs.isNotEmpty && left > 0) {
+    final s = segs.first;
+    while (s.length > 1 && left > 0) {
+      left -= Geolocator.distanceBetween(
+        s[0].latitude,
+        s[0].longitude,
+        s[1].latitude,
+        s[1].longitude,
+      );
+      s.removeAt(0);
+    }
+    if (left > 0) {
+      segs.removeAt(0);
+    } else {
+      break;
+    }
+  }
 }
 
 /// The picture that gets shared. Fixed 360 x 450 (4:5), captured at 3x
@@ -318,6 +370,20 @@ class _SharePreviewPageState extends State<SharePreviewPage> {
   final GlobalKey cardKey = GlobalKey();
   int style = 0;
   bool busy = false;
+  bool hideEnds = true;
+
+  @override
+  void initState() {
+    super.initState();
+    loadPrivacy();
+  }
+
+  Future<void> loadPrivacy() async {
+    final prefs = await SharedPreferences.getInstance();
+    final value = prefs.getBool('hideRouteEnds') ?? true;
+    if (!mounted) return;
+    setState(() => hideEnds = value);
+  }
 
   Future<void> share() async {
     setState(() => busy = true);
@@ -349,6 +415,8 @@ class _SharePreviewPageState extends State<SharePreviewPage> {
 
   @override
   Widget build(BuildContext context) {
+    final shown =
+        hideEnds ? trimRouteEnds(widget.segments) : widget.segments;
     return Scaffold(
       appBar: AppBar(title: const Text('Share run')),
       body: SafeArea(
@@ -363,7 +431,7 @@ class _SharePreviewPageState extends State<SharePreviewPage> {
                       key: cardKey,
                       child: RunShareCard(
                         run: widget.run,
-                        segments: widget.segments,
+                        segments: shown,
                         style: style,
                       ),
                     ),
@@ -371,6 +439,12 @@ class _SharePreviewPageState extends State<SharePreviewPage> {
                 ),
               ),
             ),
+            if (hideEnds && widget.segments.any((s) => s.length > 1))
+              const Padding(
+                padding: EdgeInsets.only(bottom: 8),
+                child: Text('Start and end of your route are hidden',
+                    style: TextStyle(fontSize: 12)),
+              ),
             Wrap(
               spacing: 8,
               children: [

@@ -8,6 +8,7 @@ import 'share_card.dart';
 import 'package:geolocator_android/geolocator_android.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'sync.dart';
+import 'profile_page.dart';
 
 enum RunState { idle, waiting, running, paused, finished }
 
@@ -337,9 +338,12 @@ class _RunPageState extends State<RunPage> with WidgetsBindingObserver {
           Icon(Icons.directions_run,
               size: 80, color: Theme.of(context).colorScheme.primary),
           const SizedBox(height: 8),
-          Text('Hi, ${userName()}',
-              style:
-                  const TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+                    ValueListenableBuilder<int>(
+            valueListenable: profileChanged,
+            builder: (context, _, __) => Text('Hi, ${userName()}',
+                style: const TextStyle(
+                    fontSize: 28, fontWeight: FontWeight.bold)),
+          ),
           const SizedBox(height: 4),
           const Text('Ready to go the extra mile?',
               style: TextStyle(fontSize: 16)),          const SizedBox(height: 32),
@@ -594,13 +598,7 @@ class _RunPageState extends State<RunPage> with WidgetsBindingObserver {
         appBar: AppBar(
           title: const Text('Jara',
               style: TextStyle(fontWeight: FontWeight.w800)),
-          actions: [
-                        if (phase == RunState.idle)
-              IconButton(
-                tooltip: 'Log out',
-                icon: const Icon(Icons.logout),
-                onPressed: () => Supabase.instance.client.auth.signOut(),
-              ),
+                    actions: [
             ValueListenableBuilder<ThemeMode>(
               valueListenable: themeMode,
               builder: (context, mode, _) => IconButton(

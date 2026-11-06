@@ -13,14 +13,20 @@ class SyncService {
 
   static bool get loggedIn => _db.auth.currentUser != null;
 
+  /// True if the most recent sync finished without errors.
+  static bool lastSyncOk = false;
+
   /// Returns a short message describing what happened.
   static Future<String> syncAll() async {
     if (!loggedIn) return 'Log in to sync your runs';
     if (_running) return 'Sync already in progress';
     _running = true;
     try {
-      return await _sync().timeout(const Duration(seconds: 90));
+      final message = await _sync().timeout(const Duration(seconds: 90));
+      lastSyncOk = true;
+      return message;
     } catch (e) {
+      lastSyncOk = false;
       return 'Could not sync. Check your internet and try again.';
     } finally {
       _running = false;
@@ -128,5 +134,27 @@ class SyncService {
       if (!pending.contains(id)) pending.add(id);
       await prefs.setStringList(_pendingKey, pending);
     }
+  }
+
+  /// Waits for any sync in progress, then syncs once more.
+  /// Returns true only if everything reached the cloud.
+  static Future<bool> syncNow() async {
+    for (var i = 0; i < 60 && _running; i++) {
+      await Future.delayed(const Duration(milliseconds: 500));
+    }
+    await syncAll();
+    return lastSyncOk;
+  }
+
+  /// Clears the runs stored on this phone (used when logging out).
+  /// Settings like the theme and privacy choice are kept.
+  static Future<void> clearLocalData() async {
+    final prefs = await SharedPreferences.getInstance();
+    for (final key in prefs.getKeys().toList()) {
+      if (key == 'runs' || key == _pendingKey || key.startsWith('route_')) {
+        await prefs.remove(key);
+      }
+    }
+    runsChanged.value++;
   }
 }

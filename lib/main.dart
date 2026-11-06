@@ -4,6 +4,7 @@ import 'auth_page.dart';
 import 'config.dart';
 import 'history_page.dart';
 import 'models.dart';
+import 'profile_page.dart';
 import 'run_page.dart';
 import 'stats_page.dart';
 
@@ -81,7 +82,7 @@ class _HomeShellState extends State<HomeShell> {
       // IndexedStack keeps the Run screen alive while you look at History
       body: IndexedStack(
         index: index,
-        children: const [RunPage(), HistoryPage(), StatsPage()],
+        children: const [RunPage(), HistoryPage(), StatsPage(), ProfilePage()],
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: index,
@@ -101,6 +102,11 @@ class _HomeShellState extends State<HomeShell> {
             icon: Icon(Icons.bar_chart_outlined),
             selectedIcon: Icon(Icons.bar_chart),
             label: 'Stats',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.person_outline),
+            selectedIcon: Icon(Icons.person),
+            label: 'Profile',
           ),
         ],
       ),
