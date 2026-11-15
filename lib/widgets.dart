@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'grid.dart';
 import 'models.dart';
+import 'offline_map.dart';
 
 /// Yes/No confirmation. Tapping outside the dialog counts as No.
 Future<bool> askYesNo(
@@ -222,8 +224,9 @@ class _ConfettiPainter extends CustomPainter {
 /// Draws a run's route on an OpenStreetMap map. Paused gaps stay as gaps.
 class RouteMap extends StatelessWidget {
   final List<List<GpsPoint>> segments;
+  final bool showCells;
 
-  const RouteMap({super.key, required this.segments});
+  const RouteMap({super.key, required this.segments, this.showCells = false});
 
   @override
   Widget build(BuildContext context) {
@@ -246,6 +249,17 @@ class RouteMap extends StatelessWidget {
           ),
     ];
 
+    final cells = showCells ? HexGrid.cellsForRoute(segments) : <String>{};
+    final polygons = [
+      for (final id in cells)
+        Polygon(
+          points: HexGrid.boundary(id),
+          color: Colors.green.withAlpha(45),
+          borderColor: Colors.green,
+          borderStrokeWidth: 1.5,
+        ),
+    ];
+
     return FlutterMap(
       options: MapOptions(
         initialCenter: all.first,
@@ -258,10 +272,11 @@ class RouteMap extends StatelessWidget {
             : null,
       ),
       children: [
-        TileLayer(
-          urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-          userAgentPackageName: 'com.example.run_app',
+        BaseMapLayer(
+          around: all.first,
+          dark: Theme.of(context).brightness == Brightness.dark,
         ),
+        if (polygons.isNotEmpty) PolygonLayer(polygons: polygons),
         PolylineLayer(polylines: lines),
         MarkerLayer(
           markers: [
@@ -290,14 +305,102 @@ class RouteMap extends StatelessWidget {
 class RouteMapPage extends StatelessWidget {
   final String title;
   final List<List<GpsPoint>> segments;
+  final bool showCells;
 
-  const RouteMapPage({super.key, required this.title, required this.segments});
+  const RouteMapPage({
+    super.key,
+    required this.title,
+    required this.segments,
+    this.showCells = false,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text(title)),
-      body: RouteMap(segments: segments),
+      body: RouteMap(segments: segments, showCells: showCells),
     );
   }
+}
+
+/// Tells the runner what the server decided about their run's territory.
+void showClaimResult(BuildContext context, Map<String, dynamic> r) {
+  final status = r['status'] as String? ?? 'error';
+  int n(String key) => (r[key] as num?)?.toInt() ?? 0;
+
+  String title = 'Territory update';
+  String body;
+
+  switch (status) {
+    case 'claimed':
+      final lines = <String>[
+        if (n('claimed') > 0) 'New cells claimed: ${n('claimed')}',
+        if (n('captured') > 0) 'Taken from rivals: ${n('captured')}',
+        if (n('hit') > 0) 'Rival cells weakened: ${n('hit')}',
+        if (n('defended') > 0) 'Your cells defended: ${n('defended')}',
+      ];
+      body = lines.isEmpty
+          ? 'No new territory this time. You already ran these cells today.'
+          : lines.join('\n');
+      title = 'Territory update';
+      break;
+    case 'rejected_mocked':
+      title = 'Run not counted';
+      body = 'Fake GPS was detected, so this run does not count for territory.';
+      break;
+    case 'rejected_speed':
+      title = 'Run not counted';
+      body = 'This run looked too fast for walking or running, so it does '
+          'not count for territory.';
+      break;
+    case 'rejected_time_mismatch':
+    case 'rejected_distance_mismatch':
+      title = 'Run not counted';
+      body = 'We could not verify this run\'s route and timing, so it does '
+          'not count for territory.';
+      break;
+    case 'rejected_no_times':
+    case 'rejected_no_route':
+      title = 'Run not counted';
+      body = 'This run has no route details, so it cannot count for territory.';
+      break;
+    case 'rejected_date':
+      title = 'Run not counted';
+      body = 'This run is too old to count for territory.';
+      break;
+    case 'rejected_mode':
+      title = 'Free run';
+      body = 'This was a free run, so it does not count for territory.';
+      break;
+    case 'too_short':
+      title = 'Run too short';
+      body = 'Territory needs at least 1 km and 5 minutes. Keep going next time!';
+      break;
+    case 'no_zone':
+      title = 'Outside the launch areas';
+      body = 'No territory was claimed because this run was outside the '
+          'launch areas.';
+      break;
+    case 'capped':
+      title = 'Daily limit reached';
+      body = 'You have reached today\'s territory limit. Come back tomorrow!';
+      break;
+    default:
+      title = 'Territory not updated';
+      body = 'Something went wrong: ${r['detail'] ?? status}';
+  }
+
+  showDialog<void>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text(title),
+      content: Text(body),
+      actions: [
+        FilledButton(
+          onPressed: () => Navigator.pop(ctx),
+          child: const Text('OK'),
+        ),
+      ],
+    ),
+  );
 }

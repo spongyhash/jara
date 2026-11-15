@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "408438447424",
+    "project_id": "jara-af2e4",
+    "storage_bucket": "jara-af2e4.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:408438447424:android:89a3b81e800fc51b972ea5",
+        "android_client_info": {
+          "package_name": "ng.jara.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDkGYW8soKNWAYaGG8XdzE80tGX2v8BoXM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

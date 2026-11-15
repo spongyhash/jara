@@ -63,7 +63,9 @@ class _HistoryPageState extends State<HistoryPage> {
         itemBuilder: (context, i) {
           final r = runs[i];
           return ListTile(
-            leading: const Icon(Icons.directions_run),
+            leading: Icon(r.mode == 'territory'
+                ? Icons.flag_outlined
+                : Icons.directions_run),
             title: Text('${r.distanceKm.toStringAsFixed(2)} km'),
             subtitle: Text(
               '${formatDate(r.date)}  |  ${formatTime(r.seconds)}  |  '
@@ -186,7 +188,10 @@ class _RunDetailPageState extends State<RunDetailPage> {
           Expanded(
             child: segments == null
                 ? const Center(child: CircularProgressIndicator())
-                : RouteMap(segments: segments!),
+                : RouteMap(
+                    segments: segments!,
+                    showCells: widget.run.mode == 'territory',
+                  ),
           ),
           Padding(
             padding: const EdgeInsets.all(16),

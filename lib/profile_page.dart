@@ -1,7 +1,12 @@
+import 'dart:convert';
+import 'dart:typed_data';
+import 'package:cross_file/cross_file.dart';
 import 'package:flutter/material.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'models.dart';
+import 'push.dart';
 import 'sync.dart';
 import 'widgets.dart';
 
@@ -17,6 +22,7 @@ class ProfilePage extends StatefulWidget {
 
 class _ProfilePageState extends State<ProfilePage> {
   bool hideEnds = true;
+  bool pushOn = false;
   bool busy = false;
   String busyText = '';
 
@@ -31,8 +37,37 @@ class _ProfilePageState extends State<ProfilePage> {
   Future<void> loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
     final value = prefs.getBool('hideRouteEnds') ?? true;
+    final push = prefs.getBool('pushEnabled') ?? false;
     if (!mounted) return;
-    setState(() => hideEnds = value);
+    setState(() {
+      hideEnds = value;
+      pushOn = push;
+    });
+  }
+
+  Future<void> setPush(bool value) async {
+    if (!value) {
+      setState(() => pushOn = false);
+      await Push.disable();
+      return;
+    }
+    final yes = await askYesNo(
+      context,
+      title: 'Turn on territory alerts?',
+      message: 'Jara will send you a notification when someone takes or '
+          'weakens one of your cells, even when the app is closed. You can '
+          'turn this off any time.',
+      yes: 'Turn on',
+      no: 'Not now',
+    );
+    if (!yes || !mounted) return;
+    final ok = await Push.enable();
+    if (!mounted) return;
+    setState(() => pushOn = ok);
+    if (!ok) {
+      toast('Alerts could not be turned on. Check that notifications are '
+          'allowed for Jara in your phone settings.');
+    }
   }
 
   void toast(String text) {
@@ -106,6 +141,102 @@ class _ProfilePageState extends State<ProfilePage> {
     }
   }
 
+  Future<void> exportData() async {
+    setState(() {
+      busy = true;
+      busyText = 'Preparing your data...';
+    });
+    try {
+      final data = await client.rpc('export_my_data');
+      final text = const JsonEncoder.withIndent('  ').convert(data);
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [
+            XFile.fromData(
+              Uint8List.fromList(utf8.encode(text)),
+              mimeType: 'application/json',
+            ),
+          ],
+          fileNameOverrides: ['jara_my_data.json'],
+        ),
+      );
+    } catch (_) {
+      if (mounted) toast('Could not prepare your data. Check your internet.');
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  /// A second, harder confirmation: the runner must type DELETE.
+  Future<bool> confirmTyped() async {
+    final ctrl = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: const Text('Type DELETE to confirm'),
+          content: TextField(
+            controller: ctrl,
+            autofocus: true,
+            textCapitalization: TextCapitalization.characters,
+            onChanged: (_) => setLocal(() {}),
+            decoration: const InputDecoration(hintText: 'DELETE'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: Colors.red),
+              onPressed: ctrl.text.trim() == 'DELETE'
+                  ? () => Navigator.pop(ctx, true)
+                  : null,
+              child: const Text('Delete forever'),
+            ),
+          ],
+        ),
+      ),
+    );
+    return ok ?? false;
+  }
+
+  Future<void> deleteAccount() async {
+    final first = await askYesNo(
+      context,
+      title: 'Delete your account?',
+      message: 'This permanently erases your profile, all your runs and '
+          'routes, and your territory. Cells you own become free for others. '
+          'It cannot be undone.',
+      yes: 'Continue',
+      no: 'Cancel',
+    );
+    if (!first || !mounted) return;
+    final typed = await confirmTyped();
+    if (!typed || !mounted) return;
+
+    setState(() {
+      busy = true;
+      busyText = 'Deleting your account...';
+    });
+    try {
+      await client.rpc('delete_my_account');
+    } catch (_) {
+      if (mounted) {
+        setState(() => busy = false);
+        toast('Could not delete your account. Check your internet and try again.');
+      }
+      return;
+    }
+
+    await SyncService.clearLocalData();
+    try {
+      await client.auth.signOut(scope: SignOutScope.local);
+    } catch (_) {
+      // The account is already gone; the app returns to the login screen
+    }
+  }
+
   Future<void> logOut() async {
     final yes = await askYesNo(
       context,
@@ -141,6 +272,7 @@ class _ProfilePageState extends State<ProfilePage> {
       }
     }
 
+    await Push.unregister();
     await SyncService.clearLocalData();
     await client.auth.signOut();
     // The app returns to the login screen by itself
@@ -205,11 +337,33 @@ class _ProfilePageState extends State<ProfilePage> {
             value: hideEnds,
             onChanged: setHideEnds,
           ),
+          SwitchListTile(
+            secondary: const Icon(Icons.notifications_outlined),
+            title: const Text('Territory alerts'),
+            subtitle: const Text(
+                'A notification when someone takes or weakens your cells'),
+            value: pushOn,
+            onChanged: setPush,
+          ),
+          const Divider(),
+          ListTile(
+            leading: const Icon(Icons.download_outlined),
+            title: const Text('Download my data'),
+            subtitle: const Text('A copy of your profile, runs and territory'),
+            onTap: exportData,
+          ),
           const Divider(),
           ListTile(
             leading: const Icon(Icons.logout, color: Colors.red),
             title: const Text('Log out', style: TextStyle(color: Colors.red)),
             onTap: logOut,
+          ),
+          ListTile(
+            leading: const Icon(Icons.delete_forever, color: Colors.red),
+            title: const Text('Delete my account',
+                style: TextStyle(color: Colors.red)),
+            subtitle: const Text('Erases everything permanently'),
+            onTap: deleteAccount,
           ),
         ],
       );

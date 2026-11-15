@@ -397,7 +397,7 @@ class _SharePreviewPageState extends State<SharePreviewPage> {
       final km = widget.run.distanceKm.toStringAsFixed(2);
       await SharePlus.instance.share(
         ShareParams(
-          text: 'I ran $km km with Jara. Go the extra mile!',
+          text: 'I ran $km km with Jara. You can try it out too',
           files: [XFile.fromData(bytes, mimeType: 'image/png')],
           fileNameOverrides: ['jara_run.png'],
         ),

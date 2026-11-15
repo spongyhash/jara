@@ -16,11 +16,16 @@ class SyncService {
   /// True if the most recent sync finished without errors.
   static bool lastSyncOk = false;
 
+  /// The server's territory verdict for the newest run it judged in the
+  /// last sync (claimed cells, or the reason a run did not count).
+  static Map<String, dynamic>? lastClaim;
+
   /// Returns a short message describing what happened.
   static Future<String> syncAll() async {
     if (!loggedIn) return 'Log in to sync your runs';
     if (_running) return 'Sync already in progress';
     _running = true;
+    lastClaim = null;
     try {
       final message = await _sync().timeout(const Duration(seconds: 90));
       lastSyncOk = true;
@@ -48,7 +53,7 @@ class SyncService {
     // 2. What the cloud already has (summaries only, no routes)
     final cloudRows = await _db
         .from('runs')
-        .select('local_id, run_date, distance_km, seconds')
+        .select('local_id, run_date, distance_km, seconds, mocked, mode')
         .eq('user_id', userId);
     final cloudIds = {for (final r in cloudRows) r['local_id'] as String};
 
@@ -67,6 +72,8 @@ class SyncService {
           'run_date': run.date.toUtc().toIso8601String(),
           'distance_km': run.distanceKm,
           'seconds': run.seconds,
+          'mocked': run.mocked,
+          'mode': run.mode,
           'route': routeText == null ? null : jsonDecode(routeText),
         },
         onConflict: 'user_id,local_id',
@@ -98,6 +105,8 @@ class SyncService {
           DateTime.parse(r['run_date'] as String).toLocal(),
           (r['distance_km'] as num).toDouble(),
           (r['seconds'] as num).toInt(),
+          mocked: (r['mocked'] as bool?) ?? false,
+          mode: (r['mode'] as String?) ?? 'free',
         );
         list.add(jsonEncode(record.toJson()));
         final route = routes[id];
@@ -110,8 +119,42 @@ class SyncService {
       runsChanged.value++;
     }
 
-    if (uploaded == 0 && downloaded == 0) return 'Everything is up to date';
-    return 'Synced: $uploaded uploaded, $downloaded downloaded';
+    // 5. Ask the server to judge every run that has not been checked for
+    // territory yet (oldest first). The newest verdict is kept for the screen.
+    try {
+      final pending = await _db
+          .from('runs')
+          .select('local_id')
+          .eq('user_id', userId)
+          .eq('mode', 'territory')
+          .isFilter('claim_status', null)
+          .order('run_date', ascending: true)
+          .limit(20);
+      for (final row in pending) {
+        final result = await _db.rpc(
+          'claim_run',
+          params: {'p_local_id': row['local_id']},
+        );
+        if (result is Map) {
+          lastClaim = Map<String, dynamic>.from(result);
+        }
+      }
+    } catch (_) {
+      lastClaim = {
+        'status': 'error',
+        'detail': 'The territory service is not ready yet.',
+      };
+    }
+
+    var message = (uploaded == 0 && downloaded == 0)
+        ? 'Everything is up to date'
+        : 'Synced: $uploaded uploaded, $downloaded downloaded';
+    final claim = lastClaim;
+    if (claim != null && claim['status'] == 'claimed') {
+      message += '. Territory: ${claim['claimed']} claimed, '
+          '${claim['captured']} captured';
+    }
+    return message;
   }
 
   /// Deletes a run on the phone, then in the cloud. If the phone is offline,
@@ -151,7 +194,11 @@ class SyncService {
   static Future<void> clearLocalData() async {
     final prefs = await SharedPreferences.getInstance();
     for (final key in prefs.getKeys().toList()) {
-      if (key == 'runs' || key == _pendingKey || key.startsWith('route_')) {
+      if (key == 'runs' ||
+          key == _pendingKey ||
+          key == 'cell_cache' ||
+          key == 'newsSeenAt' ||
+          key.startsWith('route_')) {
         await prefs.remove(key);
       }
     }

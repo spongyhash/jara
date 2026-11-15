@@ -7,6 +7,10 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 /// Bumped whenever runs are saved or deleted, so History and Stats refresh.
 final ValueNotifier<int> runsChanged = ValueNotifier<int>(0);
 
+/// Which kind of run is happening right now: 'free', 'territory' or null.
+/// Stops two runs starting at once from different tabs.
+final ValueNotifier<String?> activeRunMode = ValueNotifier<String?>(null);
+
 /// Light by default (easier to read in strong sun). Saved between launches.
 final ValueNotifier<ThemeMode> themeMode =
     ValueNotifier<ThemeMode>(ThemeMode.light);
@@ -28,7 +32,11 @@ class GpsPoint {
   final double latitude;
   final double longitude;
 
-  GpsPoint(this.latitude, this.longitude);
+  /// When the phone recorded this point, in seconds since 1970.
+  /// Older runs saved before this feature have no time.
+  final int? t;
+
+  GpsPoint(this.latitude, this.longitude, [this.t]);
 
   LatLng toLatLng() => LatLng(latitude, longitude);
 }
@@ -39,7 +47,14 @@ class RunRecord {
   final double distanceKm;
   final int seconds;
 
-  RunRecord(this.id, this.date, this.distanceKm, this.seconds);
+  /// True if the phone reported fake (mock) GPS readings during this run.
+  final bool mocked;
+
+  /// 'free' (no competition) or 'territory' (counts for the territory war).
+  final String mode;
+
+  RunRecord(this.id, this.date, this.distanceKm, this.seconds,
+      {this.mocked = false, this.mode = 'free'});
 
   double get paceMinPerKm =>
       distanceKm == 0 ? 0 : (seconds / 60) / distanceKm;
@@ -49,6 +64,8 @@ class RunRecord {
         'date': date.toIso8601String(),
         'distanceKm': distanceKm,
         'seconds': seconds,
+        'mocked': mocked,
+        'mode': mode,
       };
 
   factory RunRecord.fromJson(Map<String, dynamic> json) {
@@ -58,6 +75,8 @@ class RunRecord {
       date,
       (json['distanceKm'] as num).toDouble(),
       json['seconds'] as int,
+      mocked: (json['mocked'] as bool?) ?? false,
+      mode: (json['mode'] as String?) ?? 'free',
     );
   }
 }
@@ -70,7 +89,7 @@ class RunStorage {
   static Future<List<RunRecord>> loadRuns() async {
     final prefs = await SharedPreferences.getInstance();
     final list = prefs.getStringList(_key) ?? [];
-        final runs = list
+    final runs = list
         .map((s) => RunRecord.fromJson(jsonDecode(s) as Map<String, dynamic>))
         .toList();
     runs.sort((a, b) => a.date.compareTo(b.date)); // oldest first
@@ -87,8 +106,13 @@ class RunStorage {
     await prefs.setStringList(_key, list);
 
     final routeData = segments
-        .map((seg) =>
-            seg.map((p) => [_round(p.latitude), _round(p.longitude)]).toList())
+        .map((seg) => seg
+            .map((p) => [
+                  _round(p.latitude),
+                  _round(p.longitude),
+                  if (p.t != null) p.t,
+                ])
+            .toList())
         .toList();
     await prefs.setString('route_${run.id}', jsonEncode(routeData));
     runsChanged.value++;
@@ -102,7 +126,11 @@ class RunStorage {
     return data.map((seg) {
       return (seg as List<dynamic>).map((pt) {
         final xy = pt as List<dynamic>;
-        return GpsPoint((xy[0] as num).toDouble(), (xy[1] as num).toDouble());
+        return GpsPoint(
+          (xy[0] as num).toDouble(),
+          (xy[1] as num).toDouble(),
+          xy.length > 2 ? (xy[2] as num).toInt() : null,
+        );
       }).toList();
     }).toList();
   }

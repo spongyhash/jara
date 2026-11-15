@@ -5,6 +5,7 @@ import 'config.dart';
 import 'history_page.dart';
 import 'models.dart';
 import 'profile_page.dart';
+import 'push.dart';
 import 'run_page.dart';
 import 'stats_page.dart';
 
@@ -15,6 +16,7 @@ Future<void> main() async {
     url: supabaseUrl,
     publishableKey: supabasePublishableKey,
   );
+  await Push.init();
   runApp(const JaraApp());
 }
 
@@ -39,6 +41,7 @@ class JaraApp extends StatelessWidget {
         return MaterialApp(
           title: 'Jara',
           debugShowCheckedModeBanner: false,
+          scaffoldMessengerKey: messengerKey,
           themeMode: mode,
           theme: buildTheme(Brightness.light),
           darkTheme: buildTheme(Brightness.dark),
@@ -77,21 +80,38 @@ class _HomeShellState extends State<HomeShell> {
   int index = 0;
 
   @override
+  void initState() {
+    super.initState();
+    Push.registerIfEnabled(); // refresh this phone's alert address
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       // IndexedStack keeps the Run screen alive while you look at History
       body: IndexedStack(
         index: index,
-        children: const [RunPage(), HistoryPage(), StatsPage(), ProfilePage()],
+        children: [
+          RunPage(visible: index == 0),
+          RunPage(territory: true, visible: index == 1),
+          const HistoryPage(),
+          const StatsPage(),
+          const ProfilePage(),
+        ],
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: index,
         onDestinationSelected: (i) => setState(() => index = i),
         destinations: const [
           NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home),
-            label: 'Home',
+            icon: Icon(Icons.directions_run),
+            selectedIcon: Icon(Icons.directions_run),
+            label: 'Run',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.map_outlined),
+            selectedIcon: Icon(Icons.map),
+            label: 'Territory',
           ),
           NavigationDestination(
             icon: Icon(Icons.history),
